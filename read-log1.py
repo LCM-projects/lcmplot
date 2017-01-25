@@ -12,6 +12,9 @@ except ImportError:
 from bot_core import *
 import numpy as np
 
+from PyQt4.QtCore import *
+from PyQt4.QtGui import *
+
 # gets the time stamp for this lcm message if it containts 'utime' or 'timestamp', else 0.
 def get_time(msg):
   if hasattr(msg, 'utime'):
@@ -104,32 +107,69 @@ class FlatLog:
   def get_channel(self, channel_name):
     return self.channel_name_to_data[channel_name]
 
-log = lcm.EventLog(sys.argv[1], "r")
-flat_log = FlatLog()
+class Window(QWidget):
+  def __init__(self):
+    self.proc_log(sys.argv[1])
 
-# parse log
-for event in log:
-  if event.channel == "EXAMPLE":
-    msg = robot_state_t.decode(event.data)
+    QWidget.__init__(self)
+    self.treeView = QTreeView()
+    self.treeView.setContextMenuPolicy(Qt.CustomContextMenu)
+    #self.treeView.customContextMenuRequested.connect(self.openMenu)
+    #self.treeVeiw.expandsOnDoubleClick()
 
-    data_point = DataPoint(event.channel, get_time(msg))
-    data_point.flatten(msg)
+    self.model = QStandardItemModel()
+    self._build_tree_menu(self.model, self.flat_log.channel_name_to_data)
+    self.treeView.setModel(self.model)
 
-    flat_log.add_data_point(data_point)
+    self.model.setHorizontalHeaderLabels([self.tr("Object")])
+    layout = QVBoxLayout()
+    layout.addWidget(self.treeView)
+    self.setLayout(layout)
 
-flat_log.finalize()
+  def proc_log(self, log_name):
+    log = lcm.EventLog(log_name, "r")
+    self.flat_log = FlatLog()
 
-channel_name = 'EXAMPLE'
-trace_names = ['pose.translation.x', 'pose.translation.y']
-channel = flat_log.get_channel(channel_name)
+    # parse log
+    for event in log:
+      if event.channel == "EXAMPLE":
+        msg = robot_state_t.decode(event.data)
+        data_point = DataPoint(event.channel, get_time(msg))
+        data_point.flatten(msg)
+        self.flat_log.add_data_point(data_point)
 
-plt.figure(1)
-plt.hold(True)
-for trace_name in trace_names:
-  idx = channel.trace_names_to_idx[trace_name]
-  plt.plot(channel.times, channel.slice_at_trace(idx) , label = channel_name + "/" + trace_name)
-plt.xlabel('time')
-plt.legend()
+    self.flat_log.finalize()
 
-plt.show()
+  def _build_tree_menu(self, parent, channels):
+    for channel_name, channel in channels.iteritems():
+      item = QStandardItem(channel_name)
+      parent.appendRow(item)
+      self._build_tree_menu_channel(item, channel)
+
+  def _build_tree_menu_channel(self, parent, channel):
+    for trace_name, trace_idx in channel.trace_names_to_idx.iteritems():
+      item = QStandardItem(trace_name)
+      parent.appendRow(item)
+
+
+if __name__ == "__main__":
+
+    app = QApplication(sys.argv)
+    window = Window()
+    window.show()
+    sys.exit(app.exec_())
+
+#channel_name = 'EXAMPLE'
+#trace_names = ['pose.translation.x', 'pose.translation.y']
+#channel = flat_log.get_channel(channel_name)
+
+#plt.figure(1)
+#plt.hold(True)
+#for trace_name in trace_names:
+#  idx = channel.trace_names_to_idx[trace_name]
+#  plt.plot(channel.times, channel.slice_at_trace(idx) , label = channel_name + "/" + trace_name)
+#plt.xlabel('time')
+#plt.legend()
+
+#plt.show()
 
