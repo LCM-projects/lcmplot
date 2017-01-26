@@ -3,6 +3,7 @@ import lcm
 import numbers
 import decimal
 import matplotlib.pyplot as plt
+import threading
 
 try:
   import cStringIO.StringIO as BytesIO
@@ -14,6 +15,7 @@ import numpy as np
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
+from multiprocessing import Process, Pipe
 
 # gets the time stamp for this lcm message if it containts 'utime' or 'timestamp', else 0.
 def get_time(msg):
@@ -129,6 +131,33 @@ class FlatLog:
   def get_channel(self, channel_name):
     return self.channel_name_to_data[channel_name]
 
+class ProcessPlotter(object):
+  def poll_draw(self):
+    while True:
+      if not self.pipe.poll():
+        continue
+
+      command = self.pipe.recv()
+      fig_num = command[0]
+      times = command[1]
+      data = command[2]
+      legend = command[3]
+
+      print fig_num
+      print times
+
+      plt.figure(fig_num)
+      plt.plot(times, data, label = legend)
+      plt.xlabel('time')
+      plt.legend()
+      plt.show(block=False)
+
+  def __call__(self, pipe):
+    print('starting plotter...')
+    self.pipe = pipe
+    self.poll_draw()
+
+    print('plotter died...')
 
 class Window(QWidget):
   def __init__(self):
@@ -149,6 +178,13 @@ class Window(QWidget):
     layout = QVBoxLayout()
     layout.addWidget(self.treeView)
     self.setLayout(layout)
+
+    # multi processing
+    self.plot_pipe, plotter_pipe = Pipe()
+    self.plotter = ProcessPlotter()
+    self.plot_process = Process(target=self.plotter,
+                                args=(plotter_pipe,))
+    self.plot_process.start()
 
   def proc_log(self, log_name):
     log = lcm.EventLog(log_name, "r")
@@ -204,13 +240,14 @@ class Window(QWidget):
 #    from PyQt4.QtCore import pyqtRemoveInputHook
 #    pyqtRemoveInputHook()
 #    import IPython; IPython.embed()
-    plt.figure(1)
-    plt.hold(True)
-    plt.plot(channel.times, data, label = channel_name + "/" + trace_name)
-    plt.xlabel('time')
-    plt.legend()
-
-    #plt.show()
+#    plt.figure(1)
+#    plt.hold(True)
+#    plt.plot(channel.times, data, label = channel_name + "/" + trace_name)
+#    plt.xlabel('time')
+#    plt.legend()
+#    plt.show()
+    send = self.plot_pipe.send
+    send((1, channel.times, data, channel_name + "/" + trace_name))
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

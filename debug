@@ -1,0 +1,4 @@
+
+      from PyQt4.QtCore import pyqtRemoveInputHook
+      pyqtRemoveInputHook()
+      import IPython; IPython.embed()
