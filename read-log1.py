@@ -30,24 +30,37 @@ class DataPoint:
     self.trace_names_to_idx = {}
     self.trace_data = []
     self.time = time
+    self.tree = []
 
   def _recursive_flatten(self, data, current_path):
     if (hasattr(data, '__slots__')):
       # nested, keep crawling down
+      children = []
       for attr_name in data.__slots__:
         attr = data.__getattribute__(attr_name)
         if (len(current_path) == 0):
-          self._recursive_flatten(attr, attr_name)
+          my_child = self._recursive_flatten(attr, attr_name)
         else:
-          self._recursive_flatten(attr, current_path + "." + attr_name)
+          my_child = self._recursive_flatten(attr, current_path + "." + attr_name)
+        children.append((attr_name, my_child))
+      return children
     else:
       # not nested
-      if (isinstance(data, numbers.Number)):
+      children = []
+      # data is single numerical
+      if isinstance(data, numbers.Number):
         self.trace_names_to_idx[current_path] = len(self.trace_data)
         self.trace_data.append(data)
+      # data is a list / tuple of numerical
+      elif all(isinstance(x, numbers.Number) for x in data):
+        for i, x in enumerate(data):
+          self.trace_names_to_idx[current_path + '.' + str(i)] = len(self.trace_data)
+          self.trace_data.append(x)
+          children.append((str(i), []))
+      return children
 
   def flatten(self, data):
-    self._recursive_flatten(data, '')
+    self.tree = self._recursive_flatten(data, '')
     self.trace_data = np.array(self.trace_data)
 
 class Channel:
@@ -57,10 +70,13 @@ class Channel:
     self.data_points = [data_point.trace_data]
     self.trace_names_to_idx = data_point.trace_names_to_idx
     self.is_final = False
+    self.tree = []
 
   def add_data_point(self, data_point):
     if (self.is_final):
       return
+    if not self.tree:
+      self.tree = data_point.tree
 
     self.times.append(data_point.time)
     self.data_points.append(data_point.trace_data)
@@ -72,6 +88,9 @@ class Channel:
     self.times = np.array(self.times)
     self.data_points = np.array(self.data_points)
     self.is_final = True
+
+  def has_trace(self, trace_name):
+    return trace_name in self.trace_names_to_idx
 
   def slice_at_time(self, time_idx):
     return self.data_points[time_idx, :]
@@ -104,8 +123,12 @@ class FlatLog:
       channel.finalize()
     self.is_final = True
 
+  def has_channel(self, channel_name):
+    return channel_name in self.channel_name_to_data
+
   def get_channel(self, channel_name):
     return self.channel_name_to_data[channel_name]
+
 
 class Window(QWidget):
   def __init__(self):
@@ -118,8 +141,9 @@ class Window(QWidget):
     #self.treeVeiw.expandsOnDoubleClick()
 
     self.model = QStandardItemModel()
-    self._build_tree_menu(self.model, self.flat_log.channel_name_to_data)
+    self._build_log_menu(self.model, self.flat_log)
     self.treeView.setModel(self.model)
+    self.treeView.doubleClicked.connect(self._double_clicked)
 
     self.model.setHorizontalHeaderLabels([self.tr("Object")])
     layout = QVBoxLayout()
@@ -140,36 +164,57 @@ class Window(QWidget):
 
     self.flat_log.finalize()
 
-  def _build_tree_menu(self, parent, channels):
-    for channel_name, channel in channels.iteritems():
+  def _build_log_menu(self, parent, log):
+    for channel_name, channel in log.channel_name_to_data.iteritems():
       item = QStandardItem(channel_name)
       parent.appendRow(item)
-      self._build_tree_menu_channel(item, channel)
+      self._build_tree_menu(item, channel.tree)
 
-  def _build_tree_menu_channel(self, parent, channel):
-    for trace_name, trace_idx in channel.trace_names_to_idx.iteritems():
-      item = QStandardItem(trace_name)
+  def _build_tree_menu(self, parent, tree):
+    for me, children in tree:
+      item = QStandardItem(me)
       parent.appendRow(item)
+      if children:
+        self._build_tree_menu(item, children)
 
+  def _double_clicked(self, index):
+    model_idx = self.treeView.selectedIndexes()[0]
+    item = model_idx.model().itemFromIndex(index)
+
+    if (item.hasChildren()):
+      is_expand = self.treeView.isExpanded(index)
+      self.treeView.setExpanded(index, not(is_expand))
+    else:
+      path = item.text()
+      while(True):
+        if not(item.parent()):
+          channel_name = str(item.text())
+          break
+        item = item.parent()
+        path = item.text() + "." + path
+
+      trace_name = str(path[len(channel_name) + 1 :])
+      self.plot_trace(channel_name, trace_name)
+
+  def plot_trace(self, channel_name, trace_name):
+    channel = self.flat_log.get_channel(channel_name)
+    if not (channel.has_trace(trace_name)):
+      return
+    data = channel.slice_at_trace(channel.trace_names_to_idx[trace_name])
+#    from PyQt4.QtCore import pyqtRemoveInputHook
+#    pyqtRemoveInputHook()
+#    import IPython; IPython.embed()
+    plt.figure(1)
+    plt.hold(True)
+    plt.plot(channel.times, data, label = channel_name + "/" + trace_name)
+    plt.xlabel('time')
+    plt.legend()
+
+    #plt.show()
 
 if __name__ == "__main__":
-
     app = QApplication(sys.argv)
     window = Window()
     window.show()
     sys.exit(app.exec_())
-
-#channel_name = 'EXAMPLE'
-#trace_names = ['pose.translation.x', 'pose.translation.y']
-#channel = flat_log.get_channel(channel_name)
-
-#plt.figure(1)
-#plt.hold(True)
-#for trace_name in trace_names:
-#  idx = channel.trace_names_to_idx[trace_name]
-#  plt.plot(channel.times, channel.slice_at_trace(idx) , label = channel_name + "/" + trace_name)
-#plt.xlabel('time')
-#plt.legend()
-
-#plt.show()
 
