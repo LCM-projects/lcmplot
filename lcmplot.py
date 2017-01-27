@@ -36,12 +36,16 @@ class Main(QMainWindow, Ui_MainWindow):
         self.idx_to_content = {}
         self.idx_to_axe = {}
 
+        self.fig.subplots_adjust(left = 0.02, right = 0.99,
+                                bottom = 0.03, top = 0.99,
+                                wspace = 0.0, hspace = 0.1)
+
+        self.subplot_selector_group = QtGui.QButtonGroup()
+        self.subplot_selector_group.setExclusive(True)
+
         self.current_subplot_idx = self.add_subplot()
 
-#        self.fig.subplots_adjust(left = 0.02, right = 0.99,
-#                                bottom = 0.03, top = 0.99,
-#                                wspace = 0.0, hspace = 0.03)
-        self.addmpl(self.fig)
+        self.add_mpl(self.fig)
 
     def num_of_subplots(self):
         return len(self.idx_to_content)
@@ -51,7 +55,19 @@ class Main(QMainWindow, Ui_MainWindow):
         self.idx_to_content[new_subplot_idx] = []
         self.idx_to_axe[new_subplot_idx] = self.fig.add_subplot(new_subplot_idx, 1, 1)
 
+        new_selector = QtGui.QRadioButton(str(new_subplot_idx))
+        self.subplot_selector_group.addButton(new_selector)
+        new_selector.setChecked(True)
+        new_selector.clicked.connect(self.subplot_selector_handler)
+        self.mpl_figure_selector_layout.addWidget(new_selector)
+
         return new_subplot_idx
+
+    def subplot_selector_handler(self):
+        for button in self.subplot_selector_group.buttons():
+            if (button.isChecked()):
+                print button.text()
+                self.current_subplot_idx = int(str(button.text()))
 
     def remove_figure_button_handler(self):
         if self.current_subplot_idx == 1:
@@ -154,13 +170,13 @@ class Main(QMainWindow, Ui_MainWindow):
         axe.legend()
         self.fig.canvas.draw()
 
-    def addmpl(self, fig):
+    def add_mpl(self, fig):
         self.canvas = FigureCanvas(fig)
-        self.mplvl.addWidget(self.canvas)
+        self.mpl_figure_layout.addWidget(self.canvas)
         self.canvas.draw()
         self.toolbar = NavigationToolbar(self.canvas,
-                self.mpl_widget, coordinates=True)
-        self.mplvl.addWidget(self.toolbar)
+                self.matplotlib_widget, coordinates=True)
+        self.mpl_toolbar_layout.addWidget(self.toolbar)
 
 if __name__ == '__main__':
     import sys
