@@ -8,6 +8,7 @@ from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 
 from matplotlib.figure import Figure
+import matplotlib.gridspec as gridspec
 from matplotlib.backends.backend_qt4agg import (
     FigureCanvasQTAgg as FigureCanvas,
     NavigationToolbar2QT as NavigationToolbar)
@@ -16,7 +17,21 @@ Ui_MainWindow, QMainWindow = loadUiType('lcmplot.ui')
 
 from flat_log import *
 
+class Subplot:
+    def __init__(self, mpl_axes, idx, selector):
+        # [(channel_name, trace_name), ... ]
+        self.contents = []
+        self.mpl_axes = mpl_axes
+        self.idx = idx
+        self.selector = selector
+
+    def clear(self):
+        self.contents = []
+        del self.mpl_axes.lines[:]
+        self.mpl_axes.legend()
+
 class Main(QMainWindow, Ui_MainWindow):
+
     def __init__(self, ):
         super(Main, self).__init__()
         self.proc_log(sys.argv[1])
@@ -26,81 +41,129 @@ class Main(QMainWindow, Ui_MainWindow):
         self.build_log_menu(self.flat_log)
         self.traceTree.doubleClicked.connect(self.double_clicked)
 
+        # make mpl fig
+        self.fig = Figure()
+        self.fig.subplots_adjust(left = 0.02, right = 0.99,
+                                bottom = 0.03, top = 0.99,
+                                wspace = 0.0, hspace = 0.1)
+        self.add_mpl(self.fig)
+
         # connect buttons
         self.clear_all_button.clicked.connect(self.clear_all_button_handler)
         self.clear_last_button.clicked.connect(self.clear_last_button_handler)
         self.add_figure_button.clicked.connect(self.add_figure_button_handler)
         self.remove_figure_button.clicked.connect(self.remove_figure_button_handler)
 
-        self.fig = Figure()
-        self.idx_to_content = {}
-        self.idx_to_axe = {}
-
-        self.fig.subplots_adjust(left = 0.02, right = 0.99,
-                                bottom = 0.03, top = 0.99,
-                                wspace = 0.0, hspace = 0.1)
-
         self.subplot_selector_group = QtGui.QButtonGroup()
         self.subplot_selector_group.setExclusive(True)
 
-        self.current_subplot_idx = self.add_subplot()
+        self.idx_to_subplot = {}
+        self.alive_subplot_idx = []
 
-        self.add_mpl(self.fig)
+        self.new_subplot_idx = 1
+        self.num_subplots = 0
 
-    def num_of_subplots(self):
-        return len(self.idx_to_content)
+        self.add_subplot()
 
     def add_subplot(self):
-        new_subplot_idx = self.num_of_subplots() + 1
-        self.idx_to_content[new_subplot_idx] = []
-        self.idx_to_axe[new_subplot_idx] = self.fig.add_subplot(new_subplot_idx, 1, 1)
+        new_idx = self.new_subplot_idx
+        # always add a new one to the bottom
+        new_position = self.num_subplots + 1
 
-        new_selector = QtGui.QRadioButton(str(new_subplot_idx))
+        # add a new radio button for this plot and add it to the radio button group
+        new_selector = QtGui.QRadioButton(str(new_idx))
         self.subplot_selector_group.addButton(new_selector)
         new_selector.setChecked(True)
-        new_selector.clicked.connect(self.subplot_selector_handler)
         self.mpl_figure_selector_layout.addWidget(new_selector)
 
-        return new_subplot_idx
+        new_subplot = Subplot(self.fig.add_subplot(self.num_subplots + 1, 1, new_position), new_idx, new_selector)
+        self.idx_to_subplot[new_idx] = new_subplot
 
-    def subplot_selector_handler(self):
+        # increment counters
+        self.new_subplot_idx += 1
+        self.num_subplots += 1
+
+        self.alive_subplot_idx.append(new_idx)
+        self.alive_subplot_idx.sort()
+
+        return new_idx
+
+    def get_subplot_position(self, idx):
+        return self.alive_subplot_idx.index(idx)
+
+    def get_selected_subplot(self):
         for button in self.subplot_selector_group.buttons():
             if (button.isChecked()):
-                print button.text()
-                self.current_subplot_idx = int(str(button.text()))
+                active_idx = int(str(button.text()))
+                print "current subplto: " + str(active_idx)
+                return active_idx
+
+    def remove_subplot(self):
+        to_be_removed = self.idx_to_subplot[self.get_selected_subplot()]
+        # remove subplot's axes from fig
+        self.fig.delaxes(to_be_removed.mpl_axes)
+        # delete the radion button
+        self.mpl_figure_selector_layout.removeWidget(to_be_removed.selector)
+        self.subplot_selector_group.removeButton(to_be_removed.selector)
+        to_be_removed.selector.deleteLater()
+        to_be_removed.selector = None
+
+        # delete entry
+        self.alive_subplot_idx.remove(to_be_removed.idx)
+        self.alive_subplot_idx.sort()
+        del self.idx_to_subplot[to_be_removed.idx]
+
+        self.num_subplots -= 1
+
+        # the first subplot to be active
+        self.idx_to_subplot[self.alive_subplot_idx[0]].selector.setChecked(True)
+
+    def update_subplot_position(self):
+        # update the subplots' locations
+        gs = gridspec.GridSpec(self.num_subplots, 1)
+        for idx in self.alive_subplot_idx:
+            position = self.get_subplot_position(idx)
+            print("idx, pos, num_plots: " + str(idx) + " " + str(position) + " " + str(self.num_subplots))
+            #self.idx_to_subplot[idx].mpl_axes.change_geometry(self.num_subplots, 1, position)
+            self.idx_to_subplot[idx].mpl_axes.set_subplotspec(gs[position, 0])
+
+        self.fig.canvas.draw()
 
     def remove_figure_button_handler(self):
-        if self.current_subplot_idx == 1:
+        if self.num_subplots == 1:
             return
 
-        del_subplot_idx = self.current_subplot_idx
-        del self.idx_to_content[del_subplot_idx]
-        self.fig.delaxes(self.idx_to_axe[del_subplot_idx])
-        del self.idx_to_axe[del_subplot_idx]
-        num_subplots = self.num_of_subplots()
+        self.remove_subplot()
+        self.update_subplot_position()
 
-        for subplot_idx in self.idx_to_axe:
-            self.idx_to_axe[subplot_idx].change_geometry(num_subplots, 1, subplot_idx)
-
-        self.current_subplot_idx = num_subplots
-        self.fig.canvas.draw()
+        print "================="
+        print "alive: "
+        print self.alive_subplot_idx
+        print "stuff: "
+        print self.idx_to_subplot
 
     def add_figure_button_handler(self):
         self.add_subplot()
-        num_subplots = self.num_of_subplots()
-        for subplot_idx in self.idx_to_axe:
-            self.idx_to_axe[subplot_idx].change_geometry(num_subplots, 1, subplot_idx)
+        self.update_subplot_position()
 
-        self.current_subplot_idx = num_subplots
-        self.fig.canvas.draw()
+        print "================="
+        print "alive: "
+        print self.alive_subplot_idx
+        print "stuff: "
+        print self.idx_to_subplot
 
     def clear_all_button_handler(self):
-        for subplot_idx in self.idx_to_content:
-            while self.idx_to_content[subplot_idx]:
-                self.remove_last_trace_from_subplot(subplot_idx)
+        for idx in self.alive_subplot_idx:
+            self.idx_to_subplot[idx].clear()
+
+        self.fig.canvas.draw()
 
     def clear_last_button_handler(self):
-        self.remove_last_trace_from_subplot(self.current_subplot_idx)
+        subplot = self.idx_to_subplot[self.get_selected_subplot()]
+        subplot.contents.pop(-1)
+        subplot.mpl_axes.lines.pop(-1)
+        subplot.mpl_axes.legend()
+        self.fig.canvas.draw()
 
     def proc_log(self, log_name):
         log = lcm.EventLog(log_name, "r")
@@ -148,26 +211,19 @@ class Main(QMainWindow, Ui_MainWindow):
 
             trace_name = path[len(channel_name) + 1 :]
 
-            self.add_trace_to_subplot(self.current_subplot_idx, channel_name, trace_name)
+            self.add_trace_to_subplot(self.idx_to_subplot[self.get_selected_subplot()],
+                                      channel_name, trace_name)
 
-    def add_trace_to_subplot(self, subplot_idx, channel_name, trace_name):
+    def add_trace_to_subplot(self, subplot, channel_name, trace_name):
         channel = self.flat_log.get_channel(channel_name)
         if not (channel.has_trace(trace_name)):
             return
 
-        axe = self.idx_to_axe[subplot_idx]
-        self.idx_to_content[subplot_idx].append((channel_name, trace_name))
+        subplot.contents.append((channel_name, trace_name))
 
         data = channel.slice_at_trace(channel.trace_names_to_idx[trace_name])
-        axe.plot(channel.times, data, label = channel_name + "/" + trace_name)
-        axe.legend()
-        self.fig.canvas.draw()
-
-    def remove_last_trace_from_subplot(self, subplot_idx):
-        axe = self.idx_to_axe[subplot_idx]
-        axe.lines.pop(-1)
-        self.idx_to_content[subplot_idx].pop(-1)
-        axe.legend()
+        subplot.mpl_axes.plot(channel.times, data, label = channel_name + "/" + trace_name)
+        subplot.mpl_axes.legend()
         self.fig.canvas.draw()
 
     def add_mpl(self, fig):
