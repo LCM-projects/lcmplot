@@ -34,7 +34,8 @@ class Main(QMainWindow, Ui_MainWindow):
 
     def __init__(self, ):
         super(Main, self).__init__()
-        self.proc_log(sys.argv[1])
+        log_parser = Parser()
+        self.flat_log = log_parser.proc_log(sys.argv[1])
 
         self.setupUi(self)
 
@@ -63,7 +64,33 @@ class Main(QMainWindow, Ui_MainWindow):
         self.new_subplot_idx = 1
         self.num_subplots = 0
 
+        for i in range(0, 6):
+            self.add_subplot()
+        self.update_subplot_position()
+
+    def remove_figure_button_handler(self):
+        if self.num_subplots == 1:
+            return
+
+        self.remove_subplot()
+        self.update_subplot_position()
+
+    def add_figure_button_handler(self):
         self.add_subplot()
+        self.update_subplot_position()
+
+    def clear_all_button_handler(self):
+        for idx in self.alive_subplot_idx:
+            self.idx_to_subplot[idx].clear()
+
+        self.fig.canvas.draw()
+
+    def clear_last_button_handler(self):
+        subplot = self.idx_to_subplot[self.get_selected_subplot()]
+        subplot.contents.pop(-1)
+        subplot.mpl_axes.lines.pop(-1)
+        subplot.mpl_axes.legend()
+        self.fig.canvas.draw()
 
     def add_subplot(self):
         new_idx = self.new_subplot_idx
@@ -76,7 +103,14 @@ class Main(QMainWindow, Ui_MainWindow):
         new_selector.setChecked(True)
         self.mpl_figure_selector_layout.addWidget(new_selector)
 
-        new_subplot = Subplot(self.fig.add_subplot(self.num_subplots + 1, 1, new_position), new_idx, new_selector)
+        # forces matplotlib to give me a new axes with new_idx, because it's
+        # always increasing. The actual subplot location doesn't matter, since
+        # it will get reset later. I think if I use num_subplots, it gives me
+        # back the handle to the last subplot being added.
+        new_axes = self.fig.add_subplot(new_idx, 1, new_position)
+        new_subplot = Subplot(new_axes, new_idx, new_selector)
+
+        assert new_idx not in self.idx_to_subplot
         self.idx_to_subplot[new_idx] = new_subplot
 
         # increment counters
@@ -95,7 +129,6 @@ class Main(QMainWindow, Ui_MainWindow):
         for button in self.subplot_selector_group.buttons():
             if (button.isChecked()):
                 active_idx = int(str(button.text()))
-                print "current subplto: " + str(active_idx)
                 return active_idx
 
     def remove_subplot(self):
@@ -123,60 +156,11 @@ class Main(QMainWindow, Ui_MainWindow):
         gs = gridspec.GridSpec(self.num_subplots, 1)
         for idx in self.alive_subplot_idx:
             position = self.get_subplot_position(idx)
-            print("idx, pos, num_plots: " + str(idx) + " " + str(position) + " " + str(self.num_subplots))
-            #self.idx_to_subplot[idx].mpl_axes.change_geometry(self.num_subplots, 1, position)
-            self.idx_to_subplot[idx].mpl_axes.set_subplotspec(gs[position, 0])
+            axes = self.idx_to_subplot[idx].mpl_axes
+            axes.set_position(gs[position].get_position(self.fig))
+            axes.set_subplotspec(gs[position])
 
         self.fig.canvas.draw()
-
-    def remove_figure_button_handler(self):
-        if self.num_subplots == 1:
-            return
-
-        self.remove_subplot()
-        self.update_subplot_position()
-
-        print "================="
-        print "alive: "
-        print self.alive_subplot_idx
-        print "stuff: "
-        print self.idx_to_subplot
-
-    def add_figure_button_handler(self):
-        self.add_subplot()
-        self.update_subplot_position()
-
-        print "================="
-        print "alive: "
-        print self.alive_subplot_idx
-        print "stuff: "
-        print self.idx_to_subplot
-
-    def clear_all_button_handler(self):
-        for idx in self.alive_subplot_idx:
-            self.idx_to_subplot[idx].clear()
-
-        self.fig.canvas.draw()
-
-    def clear_last_button_handler(self):
-        subplot = self.idx_to_subplot[self.get_selected_subplot()]
-        subplot.contents.pop(-1)
-        subplot.mpl_axes.lines.pop(-1)
-        subplot.mpl_axes.legend()
-        self.fig.canvas.draw()
-
-    def proc_log(self, log_name):
-        log = lcm.EventLog(log_name, "r")
-        self.flat_log = FlatLog()
-
-        # parse log
-        for event in log:
-            if event.channel == "EXAMPLE":
-                msg = robot_state_t.decode(event.data)
-                data_point = DataPoint(event.channel, get_time(msg))
-                data_point.flatten(msg)
-                self.flat_log.add_data_point(data_point)
-        self.flat_log.finalize()
 
     def build_log_menu(self, log):
         for channel_name, channel in log.channel_name_to_data.iteritems():
