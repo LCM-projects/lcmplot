@@ -2,7 +2,6 @@ import sys
 import lcm
 import numbers
 import decimal
-from bot_core import *
 import numpy as np
 import pkgutil
 import importlib
@@ -12,7 +11,8 @@ try:
 except ImportError:
   from io import BytesIO
 
-
+# gets the time stamp for this lcm message if it containts 'utime' or
+# 'timestamp', else 0.
 def g_get_time(msg):
   if hasattr(msg, 'utime'):
     return msg.utime / 1e6
@@ -21,18 +21,17 @@ def g_get_time(msg):
   else:
     return 0
 
-# This class is "flattened" version of a potentially nested LCM message.
-# The flattened version will have a list of numbers representing the data, and
-# map from string to index, where the string is the nested variable name, and
-# index is the position into the list of  data.
-#
-# We will also attempt to parse a top level variable named 'utime' or
-# 'timestamp' for time, if neither exists, time will be set to 0.
+# This class represents a "flattened" version of a potentially nested LCM
+# message. It has a map from string to int, where keys (strings) are the
+# nested variable names, and values (int) are the corresponding index after
+# "flattening".
 #
 # A tree like representation of this data will also be constructed. The tree
-# has the following format: [(parent, children) ... ]
+# has the following recursive format:
+# [(var0, var0_s_children), (var1, var1_s_children), ...], where children is
+# a list of the same form. Leaf variable's children will be an empty list
 #
-# If the LCM msg looks like this:
+# If the LCM msg struct looks like this:
 # msg:
 #   int num
 #   my_other_msg stuff
@@ -40,14 +39,9 @@ def g_get_time(msg):
 # my_other_msg:
 #   int data[3]
 #
-# msg.num = 6;
-# msg.stuff[0] = 1;
-# msg.stuff[1] = 2;
-# msg.stuff[2] = 3;
-#
-# a msg will be flattend to:
-# self.trace_names_to_idx = {'num' : 0, 'stuff.0' : 1, 'stuff.1' : 2, 'stuff.2' : 3}
-# self.trace_data = [6, 1, 2, 3]
+# The signature looks like this:
+# sign.trace_names_to_idx = {'num' : 0, 'stuff.0' : 1, 'stuff.1' : 2, 'stuff.2' : 3}
+# sign.tree = [(num, []), (stuff, [(0, []), (1, []), (2, [])])]
 #
 class DataPointSignature:
   def __init__(self, channel_name, data):
@@ -84,13 +78,21 @@ class DataPointSignature:
           children.append((str(i) + " : " + str(string), []))
       return children
 
-
+# This class just contains the data part of a message, the semantics are
+# captured in the signature class.
+# Following the previous example, suppose:
+# msg.num = 6;
+# msg.stuff[0] = 1;
+# msg.stuff[1] = 2;
+# msg.stuff[2] = 3;
+#
+# It's flat data is be:
+# self.trace_data = [6, 1, 2, 3]
 class DataPoint:
   def __init__(self, data, signature, time):
     self.data = []
     self.time = time
     self._recursive_flatten(data, signature, '')
-    #self.trace_data = np.array(self.trace_data)
 
   def _recursive_flatten(self, data, signature, current_path):
     # nested
@@ -109,10 +111,11 @@ class DataPoint:
         map(self.data.append, data)
 
 
-# A channel is essentially a list of timestamps, and a list of list of data.
-# when finalize is called, the list of time and list of list of data will be
+# A channel contains a list of timestamps and a list of list of data.
+# when finalize() is called, the list of time and list of list of data will be
 # converted into np arrays.
 # data should be indexed by data[time_idx, trace_idx]
+# Should not attempt to access data before finalize() is called.
 class Channel:
   def __init__(self, channel_name):
     self.channel_name = channel_name
@@ -120,8 +123,6 @@ class Channel:
     self.times = []
     self.data_points = []
     self.is_final = False
-    #self.trace_names_to_idx = None
-    #self.tree = []
 
   def add_data_point(self, msg):
     if (self.is_final):
@@ -185,15 +186,16 @@ class FlatLog:
     return self.channels[channel_name]
 
 #############################################################################
-# gets the time stamp for this lcm message if it containts 'utime' or 'timestamp', else 0.
 class Parser:
-  def __init__(self):
+  def __init__(self, pkg_names):
     self.hash_to_decoder = {}
-    self.load_msg_types_from_package('bot_core')
+    for name in pkg_names:
+      self.load_msg_types_from_package(name)
 
   def load_msg_types_from_package(self, pkg_name):
     pkg = importlib.import_module(pkg_name)
     msgs_list = [name for _, name, _ in pkgutil.iter_modules([pkg.__name__])]
+    # for every message in the package, store its hash -> decode function.
     for name in msgs_list:
       module = getattr(pkg, name)
       self.hash_to_decoder[module._get_packed_fingerprint()] = module.decode
@@ -205,7 +207,7 @@ class Parser:
       buf = BytesIO(event.data)
     return buf.read(8)
 
-  def proc_log(self, log_name):
+  def load_log(self, log_name):
     log = lcm.EventLog(log_name, "r")
     flat_log = FlatLog()
     # parse log

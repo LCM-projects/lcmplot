@@ -29,7 +29,8 @@ class Subplot:
     def clear(self):
         self.contents = []
         del self.mpl_axes.lines[:]
-        del self.mpl_axes.legend_.texts[:]
+        if self.mpl_axes.legend_ is not None:
+            del self.mpl_axes.legend_.texts[:]
         self.mpl_axes.legend()
 
 class Main(QMainWindow, Ui_MainWindow):
@@ -37,8 +38,8 @@ class Main(QMainWindow, Ui_MainWindow):
     def __init__(self, ):
         super(Main, self).__init__()
         # parses the log file, this takes a while..
-        log_parser = Parser()
-        self.flat_log = log_parser.proc_log(sys.argv[1])
+        log_parser = Parser(['bot_core'])
+        self.flat_log = log_parser.load_log(sys.argv[1])
 
         self.setupUi(self)
 
