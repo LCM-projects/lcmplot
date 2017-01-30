@@ -231,10 +231,10 @@ class Main(QMainWindow, Ui_MainWindow):
 
     # build the tree widget that corresponds to the log topology
     def build_log_menu(self, log):
-        for channel_name, channel in log.channel_name_to_data.iteritems():
+        for channel_name, channel in log.channels.iteritems():
             item = QTreeWidgetItem()
             item.setText(0, channel_name)
-            self.build_tree_menu(item, channel.tree)
+            self.build_tree_menu(item, channel.signature.tree)
             self.traceTree.addTopLevelItem(item)
 
     # build the tree widget that corresponds to the log topology
@@ -254,7 +254,7 @@ class Main(QMainWindow, Ui_MainWindow):
 
         subplot.contents.append((channel_name, trace_name))
 
-        data = channel.slice_at_trace(channel.trace_names_to_idx[trace_name])
+        data = channel.slice_at_trace(trace_name)
         subplot.mpl_axes.plot(channel.times, data, label = channel_name + "/" + trace_name)
         subplot.mpl_axes.legend()
         self.fig.canvas.draw()
@@ -263,11 +263,16 @@ class Main(QMainWindow, Ui_MainWindow):
     def remove_trace_from_subplot(self, subplot, channel_name, trace_name):
         try:
             i = subplot.contents.index((channel_name, trace_name))
+            ax = subplot.mpl_axes
             del subplot.contents[i]
-            del subplot.mpl_axes.lines[i]
-            del subplot.mpl_axes.legend_.texts[i]
+            del ax.lines[i]
+            del ax.legend_.texts[i]
 
-            subplot.mpl_axes.legend()
+            # recompute the ax.dataLim
+            ax.relim()
+            # update ax.viewLim using the new dataLim
+            ax.autoscale_view()
+            ax.legend()
             self.fig.canvas.draw()
         except:
             return

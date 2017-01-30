@@ -12,6 +12,15 @@ try:
 except ImportError:
   from io import BytesIO
 
+
+def g_get_time(msg):
+  if hasattr(msg, 'utime'):
+    return msg.utime / 1e6
+  elif hasattr(msg, 'timetamp'):
+    return msg.timestamp / 1e6
+  else:
+    return 0
+
 # This class is "flattened" version of a potentially nested LCM message.
 # The flattened version will have a list of numbers representing the data, and
 # map from string to index, where the string is the nested variable name, and
@@ -40,54 +49,11 @@ except ImportError:
 # self.trace_names_to_idx = {'num' : 0, 'stuff.0' : 1, 'stuff.1' : 2, 'stuff.2' : 3}
 # self.trace_data = [6, 1, 2, 3]
 #
-class DataPoint:
-  def __init__(self, channel_name, time):
-    self.channel_name = channel_name
-    self.trace_names_to_idx = {}
-    self.trace_data = []
-    self.time = time
-    self.tree = []
-
-  def _recursive_flatten(self, data, current_path):
-    # nested, keep crawling down
-    if (hasattr(data, '__slots__')):
-      children = []
-      for attr_name in data.__slots__:
-        attr = data.__getattribute__(attr_name)
-        if (len(current_path) == 0):
-          my_child = self._recursive_flatten(attr, attr_name)
-        else:
-          my_child = self._recursive_flatten(attr, current_path + "." + attr_name)
-        children.append((attr_name, my_child))
-      return children
-    # not nested
-    else:
-      children = []
-      # data is single numerical
-      if isinstance(data, numbers.Number):
-        self.trace_names_to_idx[current_path] = len(self.trace_data)
-        self.trace_data.append(data)
-      # data is a list / tuple of numerical
-      elif all(isinstance(x, numbers.Number) for x in data):
-        for i, x in enumerate(data):
-          self.trace_names_to_idx[current_path + '.' + str(i)] = len(self.trace_data)
-          self.trace_data.append(x)
-          children.append((str(i), []))
-      # data is a list / tuple of strings
-      elif all(isinstance(x, (str, unicode)) for x in data):
-        for i, string in enumerate(data):
-          children.append((str(i) + " : " + str(string), []))
-      return children
-
-  def flatten(self, data):
-    self.tree = self._recursive_flatten(data, '')
-    self.trace_data = np.array(self.trace_data)
-
 class DataPointSignature:
-  def __init__(self, channel_name, time):
+  def __init__(self, channel_name, data):
     self.channel_name = channel_name
     self.trace_names_to_idx = {}
-    self.tree = []
+    self.tree = self._recursive_flatten(data, '')
 
   def _recursive_flatten(self, data, current_path):
     # nested, keep crawling down
@@ -118,14 +84,13 @@ class DataPointSignature:
           children.append((str(i) + " : " + str(string), []))
       return children
 
-  def flatten(self, data):
-    self.tree = self._recursive_flatten(data, '')
 
 class DataPoint:
   def __init__(self, data, signature, time):
-    self.trace_data = []
+    self.data = []
     self.time = time
     self._recursive_flatten(data, signature, '')
+    #self.trace_data = np.array(self.trace_data)
 
   def _recursive_flatten(self, data, signature, current_path):
     # nested
@@ -139,9 +104,9 @@ class DataPoint:
     # leaf
     else:
       if isinstance(data, numbers.Number):
-        self.trace_data.append(data)
+        self.data.append(data)
       elif all(isinstance(x, numbers.Number) for x in data):
-        map(self.trace_data.append, data)
+        map(self.data.append, data)
 
 
 # A channel is essentially a list of timestamps, and a list of list of data.
@@ -149,22 +114,27 @@ class DataPoint:
 # converted into np arrays.
 # data should be indexed by data[time_idx, trace_idx]
 class Channel:
-  def __init__(self, data_point):
-    self.channel_name = data_point.channel_name
-    self.times = [data_point.time]
-    self.data_points = [data_point.trace_data]
-    self.trace_names_to_idx = data_point.trace_names_to_idx
+  def __init__(self, channel_name):
+    self.channel_name = channel_name
+    self.signature = None
+    self.times = []
+    self.data_points = []
     self.is_final = False
-    self.tree = []
+    #self.trace_names_to_idx = None
+    #self.tree = []
 
-  def add_data_point(self, data_point):
+  def add_data_point(self, msg):
     if (self.is_final):
       return
-    if not self.tree:
-      self.tree = data_point.tree
 
-    self.times.append(data_point.time)
-    self.data_points.append(data_point.trace_data)
+    if self.signature is None:
+      self.signature = DataPointSignature(self.channel_name, msg)
+
+    time = g_get_time(msg)
+
+    flat_data_point = DataPoint(msg, self.signature, time)
+    self.times.append(flat_data_point.time)
+    self.data_points.append(flat_data_point.data)
 
   def finalize(self):
     if (self.is_final):
@@ -175,44 +145,44 @@ class Channel:
     self.is_final = True
 
   def has_trace(self, trace_name):
-    return trace_name in self.trace_names_to_idx
+    return trace_name in self.signature.trace_names_to_idx
 
   def slice_at_time(self, time_idx):
     return self.data_points[time_idx, :]
 
-  def slice_at_trace(self, trace_idx):
+  def slice_at_trace(self, trace_name):
+    trace_idx = self.signature.trace_names_to_idx[trace_name]
     return self.data_points[:, trace_idx]
 
 # Holds a collection of channels.
 class FlatLog:
   def __init__(self):
-    self.channel_name_to_data = {}
+    self.channels = {}
     self.is_final = False
 
-  def add_data_point(self, data_point):
+  def add_data_point(self, channel_name, msg):
     if (self.is_final):
       return
 
-    if data_point.channel_name in self.channel_name_to_data:
-      channel = self.channel_name_to_data[data_point.channel_name]
-      channel.add_data_point(data_point)
-    else:
-      self.channel_name_to_data[data_point.channel_name] = Channel(data_point)
-      channel = self.channel_name_to_data[data_point.channel_name]
+    if channel_name not in self.channels:
+      self.channels[channel_name] = Channel(channel_name)
+
+    channel = self.channels[channel_name]
+    channel.add_data_point(msg)
 
   def finalize(self):
     if (self.is_final):
       return
 
-    for channel_name, channel in self.channel_name_to_data.iteritems():
+    for channel_name, channel in self.channels.iteritems():
       channel.finalize()
     self.is_final = True
 
   def has_channel(self, channel_name):
-    return channel_name in self.channel_name_to_data
+    return channel_name in self.channels
 
   def get_channel(self, channel_name):
-    return self.channel_name_to_data[channel_name]
+    return self.channels[channel_name]
 
 #############################################################################
 # gets the time stamp for this lcm message if it containts 'utime' or 'timestamp', else 0.
@@ -227,14 +197,6 @@ class Parser:
     for name in msgs_list:
       module = getattr(pkg, name)
       self.hash_to_decoder[module._get_packed_fingerprint()] = module.decode
-
-  def _get_time(self, msg):
-    if hasattr(msg, 'utime'):
-      return msg.utime / 1e6
-    elif hasattr(msg, 'timetamp'):
-      return msg.timestamp / 1e6
-    else:
-      return 0
 
   def _get_msg_hash(self, event):
     if hasattr(event.data, 'read'):
@@ -252,9 +214,7 @@ class Parser:
       if msg_hash in self.hash_to_decoder:
         decoder = self.hash_to_decoder[msg_hash]
         msg = decoder(event.data)
-        data_point = DataPoint(event.channel, self._get_time(msg))
-        data_point.flatten(msg)
-        flat_log.add_data_point(data_point)
+        flat_log.add_data_point(event.channel, msg)
 
     flat_log.finalize()
     return flat_log
