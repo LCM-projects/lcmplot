@@ -139,14 +139,14 @@
           <item row="3" column="0">
            <widget class="QPushButton" name="clear_all_button">
             <property name="text">
-             <string>Clear All</string>
+             <string>Clear All Traces</string>
             </property>
            </widget>
           </item>
           <item row="2" column="0">
            <widget class="QPushButton" name="clear_last_button">
             <property name="text">
-             <string>Clear Last</string>
+             <string>Clear Last Trace</string>
             </property>
            </widget>
           </item>

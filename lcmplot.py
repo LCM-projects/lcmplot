@@ -19,7 +19,8 @@ from flat_log import *
 
 class Subplot:
     def __init__(self, mpl_axes, idx, selector):
-        # [(channel_name, trace_name), ... ]
+        # [(channel_name, trace_name), ... ], the order should match
+        # self.mpl_axes.lines, and self.mpl_axes.legend_.texts
         self.contents = []
         self.mpl_axes = mpl_axes
         self.idx = idx
@@ -28,26 +29,32 @@ class Subplot:
     def clear(self):
         self.contents = []
         del self.mpl_axes.lines[:]
+        del self.mpl_axes.legend_.texts[:]
         self.mpl_axes.legend()
 
 class Main(QMainWindow, Ui_MainWindow):
 
     def __init__(self, ):
         super(Main, self).__init__()
+        # parses the log file, this takes a while..
         log_parser = Parser()
         self.flat_log = log_parser.proc_log(sys.argv[1])
 
         self.setupUi(self)
 
-        self.build_log_menu(self.flat_log)
-        self.traceTree.doubleClicked.connect(self.double_clicked)
-
         # make mpl fig
         self.fig = Figure()
+        # initial attempt to eliminate borders in the subplots
         self.fig.subplots_adjust(left = 0.02, right = 0.99,
                                 bottom = 0.03, top = 0.99,
                                 wspace = 0.0, hspace = 0.1)
         self.add_mpl(self.fig)
+
+        # build the treeWidget
+        self.build_log_menu(self.flat_log)
+        # add right click menu stuff
+        self.traceTree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.traceTree.customContextMenuRequested.connect(self.open_menu)
 
         # connect buttons
         self.clear_all_button.clicked.connect(self.clear_all_button_handler)
@@ -55,19 +62,68 @@ class Main(QMainWindow, Ui_MainWindow):
         self.add_figure_button.clicked.connect(self.add_figure_button_handler)
         self.remove_figure_button.clicked.connect(self.remove_figure_button_handler)
 
+        # make radio buttons / button group for the subplot selector
         self.subplot_selector_group = QtGui.QButtonGroup()
         self.subplot_selector_group.setExclusive(True)
 
+        # init internal lookups
+        # subplot index -> subplot, subplot index is stricted increasing
         self.idx_to_subplot = {}
+        # list of present subplots, this list needs to be sorted. and it gives
+        # the index that matplotlib uses for plotting.
+        # e.g. self.alive_subplot_idx = [1, 3, 4, 5, 8] means subplot 1 3 4 5 8
+        # are present, and
+        # subplot 1 is plotted at (5, 1, 1),
+        # subplot 3 is plotted at (5, 1, 2),
+        # subplot 4 is plotted at (5, 1, 3),
+        # subplot 5 is plotted at (5, 1, 4),
+        # subplot 8 is plotted at (5, 1, 5),
+        # where the 3 number tuple is (num_rows, num_cols, idx) for drawing
+        # subplots in matplotlib
         self.alive_subplot_idx = []
 
         self.new_subplot_idx = 1
         self.num_subplots = 0
 
+        # init to have 6 subplots by default
         for i in range(0, 6):
             self.add_subplot()
+
+        # redraw
         self.update_subplot_position()
 
+    # get the channel name, and trace name from a Qt something item
+    def get_channel_and_trace_name_from_item(self, item):
+        path = str(item.text(0))
+        while(True):
+            if not(item.parent()):
+                channel_name = str(item.text(0))
+                break
+            item = item.parent()
+            path = str(item.text(0)) + "." + path
+
+        trace_name = path[len(channel_name) + 1 :]
+        return (channel_name, trace_name)
+
+    # make a right click menu only for leaf nodes.
+    def open_menu(self, position):
+        item = self.traceTree.selectedItems()[0]
+        # leaf node
+        if item.childCount() == 0:
+            names = self.get_channel_and_trace_name_from_item(item)
+            channel_name = names[0]
+            trace_name = names[1]
+
+            subplot = self.idx_to_subplot[self.get_selected_subplot()]
+
+            # make a right click popup menu
+            menu = QMenu()
+            menu.addAction("Add trace", lambda: self.add_trace_to_subplot(subplot, channel_name, trace_name))
+            menu.addAction("Remove trace", lambda: self.remove_trace_from_subplot(subplot, channel_name, trace_name))
+
+            menu.exec_(self.traceTree.viewport().mapToGlobal(position))
+
+    # button handler for "Remove Figure" button
     def remove_figure_button_handler(self):
         if self.num_subplots == 1:
             return
@@ -75,23 +131,28 @@ class Main(QMainWindow, Ui_MainWindow):
         self.remove_subplot()
         self.update_subplot_position()
 
+    # button handler for "Add Figure" button
     def add_figure_button_handler(self):
         self.add_subplot()
         self.update_subplot_position()
 
+    # button handler for "Clear All Traces" button
     def clear_all_button_handler(self):
         for idx in self.alive_subplot_idx:
             self.idx_to_subplot[idx].clear()
 
         self.fig.canvas.draw()
 
+    # button handler for "Clear Last Trace" button
     def clear_last_button_handler(self):
         subplot = self.idx_to_subplot[self.get_selected_subplot()]
         subplot.contents.pop(-1)
         subplot.mpl_axes.lines.pop(-1)
+        subplot.mpl_axes.legend_.texts.pop(-1)
         subplot.mpl_axes.legend()
         self.fig.canvas.draw()
 
+    # add a subplot
     def add_subplot(self):
         new_idx = self.new_subplot_idx
         # always add a new one to the bottom
@@ -110,7 +171,6 @@ class Main(QMainWindow, Ui_MainWindow):
         new_axes = self.fig.add_subplot(new_idx, 1, new_position)
         new_subplot = Subplot(new_axes, new_idx, new_selector)
 
-        assert new_idx not in self.idx_to_subplot
         self.idx_to_subplot[new_idx] = new_subplot
 
         # increment counters
@@ -122,15 +182,21 @@ class Main(QMainWindow, Ui_MainWindow):
 
         return new_idx
 
+    # get the correct positioning index (index that we tell matplotlib where
+    # to draw the subplot) from subplot index. Since subplot index is strictly
+    # increasing, and we could have removed some subplot earlier, these two
+    # indices are not necessarily the same all the time.
     def get_subplot_position(self, idx):
         return self.alive_subplot_idx.index(idx)
 
+    # gets the current subplot index from the selector radio buttons.
     def get_selected_subplot(self):
         for button in self.subplot_selector_group.buttons():
             if (button.isChecked()):
                 active_idx = int(str(button.text()))
                 return active_idx
 
+    # removes a subplot completely
     def remove_subplot(self):
         to_be_removed = self.idx_to_subplot[self.get_selected_subplot()]
         # remove subplot's axes from fig
@@ -151,6 +217,7 @@ class Main(QMainWindow, Ui_MainWindow):
         # the first subplot to be active
         self.idx_to_subplot[self.alive_subplot_idx[0]].selector.setChecked(True)
 
+    # updates the rendering of all subplots. should be called after add / remove subplot.
     def update_subplot_position(self):
         # update the subplots' locations
         gs = gridspec.GridSpec(self.num_subplots, 1)
@@ -162,6 +229,7 @@ class Main(QMainWindow, Ui_MainWindow):
 
         self.fig.canvas.draw()
 
+    # build the tree widget that corresponds to the log topology
     def build_log_menu(self, log):
         for channel_name, channel in log.channel_name_to_data.iteritems():
             item = QTreeWidgetItem()
@@ -169,6 +237,7 @@ class Main(QMainWindow, Ui_MainWindow):
             self.build_tree_menu(item, channel.tree)
             self.traceTree.addTopLevelItem(item)
 
+    # build the tree widget that corresponds to the log topology
     def build_tree_menu(self, parent, tree):
         for me, children in tree:
             item = QTreeWidgetItem()
@@ -177,27 +246,7 @@ class Main(QMainWindow, Ui_MainWindow):
                 self.build_tree_menu(item, children)
             parent.addChild(item)
 
-    def double_clicked(self, index):
-        item = self.traceTree.selectedItems()[0]
-        # has children, should keep expanding
-        if item.childCount():
-            ############# TODO THIS DOESN'T EXPAND
-            is_expand = self.traceTree.expand(index)
-            #self.traceTree.setExpanded(index, not(is_expand))
-        else:
-            path = str(item.text(0))
-            while(True):
-                if not(item.parent()):
-                    channel_name = str(item.text(0))
-                    break
-                item = item.parent()
-                path = str(item.text(0)) + "." + path
-
-            trace_name = path[len(channel_name) + 1 :]
-
-            self.add_trace_to_subplot(self.idx_to_subplot[self.get_selected_subplot()],
-                                      channel_name, trace_name)
-
+    # adds a trace to a specific subplot, calls redraw only for that subplot
     def add_trace_to_subplot(self, subplot, channel_name, trace_name):
         channel = self.flat_log.get_channel(channel_name)
         if not (channel.has_trace(trace_name)):
@@ -210,6 +259,20 @@ class Main(QMainWindow, Ui_MainWindow):
         subplot.mpl_axes.legend()
         self.fig.canvas.draw()
 
+    # removes a trace from a specific subplot, calls redraw only for that subplot
+    def remove_trace_from_subplot(self, subplot, channel_name, trace_name):
+        try:
+            i = subplot.contents.index((channel_name, trace_name))
+            del subplot.contents[i]
+            del subplot.mpl_axes.lines[i]
+            del subplot.mpl_axes.legend_.texts[i]
+
+            subplot.mpl_axes.legend()
+            self.fig.canvas.draw()
+        except:
+            return
+
+    # make the matplotlib widget in the main gui.
     def add_mpl(self, fig):
         self.canvas = FigureCanvas(fig)
         self.mpl_figure_layout.addWidget(self.canvas)
