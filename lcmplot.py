@@ -1,11 +1,9 @@
 import sys
-import lcm
-import numbers
-import decimal
 
+from PyQt4 import (QtGui, QtCore)
+from PyQt4.QtCore import Qt
+from PyQt4.QtGui import (QTreeWidgetItem, QMenu)
 from PyQt4.uic import loadUiType
-from PyQt4.QtCore import *
-from PyQt4.QtGui import *
 
 from matplotlib.figure import Figure
 import matplotlib.gridspec as gridspec
@@ -15,7 +13,7 @@ from matplotlib.backends.backend_qt4agg import (
 
 Ui_MainWindow, QMainWindow = loadUiType('lcmplot.ui')
 
-from flat_log import *
+from flat_log import Parser
 
 class Subplot:
     def __init__(self, mpl_axes, idx, selector):
@@ -288,10 +286,6 @@ class Main(QMainWindow, Ui_MainWindow):
         self.mpl_toolbar_layout.addWidget(self.toolbar)
 
 if __name__ == '__main__':
-    import sys
-    from PyQt4 import QtGui
-    import numpy as np
-
     app = QtGui.QApplication(sys.argv)
     main = Main()
     main.show()
