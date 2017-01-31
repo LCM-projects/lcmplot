@@ -1,0 +1,19 @@
+You need to have the lcm executables and libraries as well as matplotlib and
+qt related things. I think lcm and qt comes with drake, you might need to
+install matplotlib (http://matplotlib.org/users/installing.html)
+
+I have not tried to setup the python packages for the lcm message correctly..
+For now, you need to set $BOT_CORE_LCMT_HOME to where bot_core's .lcm are, and
+run ./gen-types.sh.
+
+You can then start the plotter with:
+python lcmplot.py example_log/val_standing_log
+
+val_standing_log is a short log of simulated valkyrie standing controlled by
+the qp controller in drake master.
+
+The traces should be shown on the right side, double click to expand and
+collapse. When you get to the leaf, you can right click to plot or remove
+that trace.
+The radio buttons are some kind of subplot selectors. Plotting and removing
+traces operates on the subplot.
