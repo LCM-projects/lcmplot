@@ -14,7 +14,7 @@ except ImportError:
 def g_get_time(msg):
     if hasattr(msg, 'utime'):
         return msg.utime / 1e6
-    elif hasattr(msg, 'timetamp'):
+    elif hasattr(msg, 'timestamp'):
         return msg.timestamp / 1e6
     else:
         return 0

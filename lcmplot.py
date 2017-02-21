@@ -36,7 +36,7 @@ class Main(QMainWindow, Ui_MainWindow):
     def __init__(self, ):
         super(Main, self).__init__()
         # parses the log file, this takes a while..
-        log_parser = Parser(['bot_core'])
+        log_parser = Parser(['bot_core', 'drake'])
         self.flat_log = log_parser.load_log(sys.argv[1])
 
         self.setupUi(self)

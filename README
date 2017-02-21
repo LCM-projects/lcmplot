@@ -17,3 +17,10 @@ collapse. When you get to the leaf, you can right click to plot or remove
 that trace.
 The radio buttons are some kind of subplot selectors. Plotting and removing
 traces operates on the subplot.
+
+
+new features:
+* reload log. remove any trace that can't be found in the new log file.
+* add a vertical time sync line in all subplots
+* zoom in all subplots around some time index
+* simple operation, + - ./ scale ...
