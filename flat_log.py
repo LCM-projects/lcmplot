@@ -47,6 +47,9 @@ class DataPointSignature:
         self.trace_names_to_idx = {}
         self.tree = self._recursive_flatten(data, '')
 
+        self.trace_names_to_idx['dt'] = len(self.trace_names_to_idx)
+        self.tree.append(('dt', []))
+
     def _recursive_flatten(self, data, current_path):
         children = []
         # nested, keep crawling down
@@ -129,6 +132,11 @@ class Channel:
         time = g_get_time(msg)
 
         flat_data_point = DataPoint(msg, self.signature, time)
+        dt = 0
+        if len(self.times) > 0:
+            dt = time - self.times[-1]
+        flat_data_point.data.append(dt)
+
         self.times.append(flat_data_point.time)
         self.data_points.append(flat_data_point.data)
 
